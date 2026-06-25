@@ -354,10 +354,11 @@ def load_preferences() -> dict:
         except (json.JSONDecodeError, OSError):
             pass
     return {
-        "version": 1,
+        "version": 2,
         "default_table": None,
         "supplier_tables": {},
         "field_aliases": {},
+        "header_mappings": {},
         "updated_at": None,
     }
 
@@ -383,6 +384,30 @@ def get_table_for_supplier(supplier: str) -> str | None:
 def set_default_table(table_path: str):
     prefs = load_preferences()
     prefs["default_table"] = table_path
+    save_preferences(prefs)
+
+
+def get_header_mapping(signature: str) -> dict | None:
+    return load_preferences().get("header_mappings", {}).get(signature)
+
+
+def save_header_mapping(
+    signature: str,
+    headers: list[str],
+    mappings: dict[int | str, dict],
+):
+    prefs = load_preferences()
+    records = prefs.setdefault("header_mappings", {})
+    existing = records.get(signature, {}).get("mappings", {})
+    serialized = {
+        str(column_index): mapping
+        for column_index, mapping in mappings.items()
+    }
+    records[signature] = {
+        "headers": headers,
+        "mappings": {**existing, **serialized},
+        "updated_at": datetime.now().isoformat(),
+    }
     save_preferences(prefs)
 
 

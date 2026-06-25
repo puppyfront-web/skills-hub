@@ -118,3 +118,48 @@ def validate_suggestions(
             accepted[item["column_index"]] = item
 
     return accepted, pending
+
+
+def resolve_header_mapping(
+    headers: list[object],
+    learned: dict[str, dict] | None,
+    suggestions: list[dict],
+) -> tuple[dict[int, dict], list[dict], list[dict]]:
+    exact = exact_mappings(headers)
+    resolved = {
+        int(column_index): mapping
+        for column_index, mapping in (learned or {}).items()
+    }
+    pending = []
+    occupied = {
+        item["target_field"]
+        for item in resolved.values()
+        if item.get("target_field")
+    }
+    blocked_columns = set()
+
+    for column_index, mapping in exact.items():
+        if column_index in resolved:
+            continue
+        if mapping["target_field"] in occupied:
+            pending.append({**mapping, "reason_code": "target_conflict"})
+            blocked_columns.add(column_index)
+            continue
+        resolved[column_index] = mapping
+        occupied.add(mapping["target_field"])
+
+    unknown = [
+        {
+            "column_index": index,
+            "header": normalize_header(header),
+        }
+        for index, header in enumerate(headers, 1)
+        if index not in resolved and index not in blocked_columns
+    ]
+    accepted, llm_pending = validate_suggestions(
+        headers,
+        suggestions,
+        occupied,
+    )
+    resolved.update(accepted)
+    return resolved, pending + llm_pending, unknown

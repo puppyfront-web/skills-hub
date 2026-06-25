@@ -10,6 +10,7 @@ from table_schema import (
     exact_mappings,
     header_signature,
     normalize_header,
+    resolve_header_mapping,
     validate_suggestions,
 )
 
@@ -96,6 +97,29 @@ class TableSchemaTests(unittest.TestCase):
     def test_allowed_fields_do_not_include_user_maintained_columns(self):
         self.assertNotIn("description", ALLOWED_FIELDS)
         self.assertNotIn("piece_count", ALLOWED_FIELDS)
+
+    def test_learned_mapping_wins_and_exact_conflict_is_pending(self):
+        learned = {
+            "1": {
+                "column_index": 1,
+                "header": "款号",
+                "target_field": "fabric_code",
+                "source": "user",
+                "confidence": 1.0,
+            },
+        }
+
+        resolved, pending, unknown = resolve_header_mapping(
+            ["款号", "面料款号", "数量"],
+            learned,
+            [],
+        )
+
+        self.assertEqual(resolved[1]["target_field"], "fabric_code")
+        self.assertEqual(resolved[3]["target_field"], "quantity")
+        self.assertEqual(pending[0]["column_index"], 2)
+        self.assertEqual(pending[0]["reason_code"], "target_conflict")
+        self.assertEqual(unknown, [])
 
 
 if __name__ == "__main__":
