@@ -26,12 +26,153 @@ from templates import (
     format_extraction_review, parse_natural_correction,
     save_from_results, get_table_for_supplier, set_supplier_table, set_default_table,
     load_preferences, REVIEW_COLUMNS, FIELD_LABELS,
-    build_learning_entries,
+    build_learning_entries, get_header_mapping, save_header_mapping,
 )
 from export import export_xlsx_append, iter_invoice_groups
+from header_mapper import infer_headers
+from table_schema import (
+    ALLOWED_FIELDS,
+    exact_mappings,
+    header_signature,
+    normalize_header,
+    resolve_header_mapping,
+)
 
 ASSISTANT_SUMMARY_PREFIX = "ASSISTANT_SUMMARY_JSON:"
 ASSISTANT_PROGRESS_PREFIX = "ASSISTANT_PROGRESS_JSON:"
+
+
+def read_headers(path: str) -> tuple[str, list[str]]:
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(path, read_only=True)
+    sheet = workbook.active
+    headers = [
+        normalize_header(sheet.cell(1, column).value)
+        for column in range(1, sheet.max_column + 1)
+    ]
+    workbook.close()
+    return sheet.title, headers
+
+
+def create_target_table(path: str, header_text: str) -> str:
+    from openpyxl import Workbook
+
+    headers = [
+        normalize_header(value)
+        for value in header_text.split(",")
+        if normalize_header(value)
+    ]
+    if not headers:
+        raise ValueError("请提供至少一个表头字段")
+
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    workbook.active.append(headers)
+    workbook.save(target)
+    return str(target)
+
+
+def save_user_header_mapping(
+    path: str,
+    user_mapping: dict[str, str | None],
+) -> dict[int, dict]:
+    _, headers = read_headers(path)
+    mappings = {}
+    occupied = set()
+
+    for raw_column, target_field in user_mapping.items():
+        try:
+            column_index = int(raw_column)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"无效列序号: {raw_column}") from error
+        if column_index < 1 or column_index > len(headers):
+            raise ValueError(f"列序号超出范围: {column_index}")
+        if target_field is not None and target_field not in ALLOWED_FIELDS:
+            raise ValueError(f"不支持的目标字段: {target_field}")
+        if target_field is not None and target_field in occupied:
+            raise ValueError(f"目标字段重复: {target_field}")
+        if target_field is not None:
+            occupied.add(target_field)
+        mappings[column_index] = {
+            "column_index": column_index,
+            "header": headers[column_index - 1],
+            "target_field": target_field,
+            "source": "user",
+            "confidence": 1.0,
+            "reason": "用户确认",
+        }
+
+    signature = header_signature(headers)
+    save_header_mapping(signature, headers, mappings)
+    return mappings
+
+
+def prepare_target_table(
+    explicit: str | None,
+    saved: str | None,
+    gateway: dict,
+) -> dict:
+    path = explicit or saved
+    if not path or not Path(path).is_file():
+        return {"status": "waiting_for_table", "path": None}
+
+    sheet_name, headers = read_headers(path)
+    signature = header_signature(headers)
+    record = get_header_mapping(signature)
+    learned = record.get("mappings", {}) if record else {}
+    exact = exact_mappings(headers)
+    unresolved = [
+        {"column_index": index, "header": header}
+        for index, header in enumerate(headers, 1)
+        if str(index) not in learned and index not in exact
+    ]
+
+    suggestions = []
+    llm_unavailable = False
+    if unresolved:
+        suggestions = infer_headers(
+            gateway.get("base_url", ""),
+            gateway.get("token", ""),
+            gateway.get("model", "openclaw/default"),
+            unresolved,
+            Path(path).name,
+        )
+        if isinstance(suggestions, dict):
+            llm_unavailable = True
+            suggestions = []
+
+    mappings, pending, _ = resolve_header_mapping(
+        headers,
+        learned,
+        suggestions,
+    )
+    if llm_unavailable:
+        pending.extend({
+            **item,
+            "target_field": None,
+            "confidence": 0.0,
+            "reason_code": "llm_unavailable",
+        } for item in unresolved)
+
+    result = {
+        "path": path,
+        "sheet_name": sheet_name,
+        "signature": signature,
+        "mappings": mappings,
+        "pending_mappings": pending,
+    }
+    has_writable_field = any(
+        mapping.get("target_field")
+        for mapping in mappings.values()
+    )
+    if not has_writable_field:
+        return {**result, "status": "needs_header_confirmation"}
+
+    save_header_mapping(signature, headers, mappings)
+    status = "ready_with_pending_mapping" if pending else "ready"
+    return {**result, "status": status}
 
 
 def process_batch(images_dir: str, output: str,
@@ -984,6 +1125,12 @@ def main():
                         help="Apply corrections in one shot. Format: 'Supplier:correction | Supplier:correction' or '全部确认'")
     parser.add_argument("--interactive", action="store_true",
                         help="Interactive mode: walk through pending items one by one in terminal")
+    parser.add_argument("--setup-table",
+                        help="Validate or create the target Excel table")
+    parser.add_argument("--headers",
+                        help="Comma-separated headers used with --setup-table")
+    parser.add_argument("--header-mapping",
+                        help="JSON object: 1-based column index to allowed field or null")
     args = parser.parse_args()
 
     # Auto-detect gateway config if not explicitly provided
@@ -1027,6 +1174,60 @@ def main():
         else:
             print(summary["user_message"])
         sys.exit(0)
+
+    if args.setup_table:
+        table_path = args.setup_table
+        if not Path(table_path).is_file():
+            if not args.headers:
+                parser.error("--headers is required when creating a new table")
+            create_target_table(table_path, args.headers)
+        if args.header_mapping:
+            try:
+                user_mapping = json.loads(args.header_mapping)
+            except json.JSONDecodeError as error:
+                parser.error(f"invalid --header-mapping JSON: {error}")
+            if not isinstance(user_mapping, dict):
+                parser.error("--header-mapping must be a JSON object")
+            save_user_header_mapping(table_path, user_mapping)
+
+        table_decision = prepare_target_table(
+            table_path,
+            None,
+            {
+                "base_url": (
+                    f"http://{args.gateway_host}:{args.gateway_port}"
+                ),
+                "token": args.token,
+                "model": args.model,
+            },
+        )
+        if table_decision["status"] != "needs_header_confirmation":
+            set_default_table(table_path)
+            saved_table = table_path
+
+        if not args.input_dir:
+            if table_decision["status"] == "needs_header_confirmation":
+                summary = {
+                    "status": "needs_header_confirmation",
+                    "user_message": (
+                        "这张表有几列表头还不能确定，请确认字段对应关系。"
+                    ),
+                    "pending_mappings": table_decision["pending_mappings"],
+                }
+            else:
+                summary = {
+                    "status": "table_ready",
+                    "user_message": (
+                        f"已设置录入表《{Path(table_path).name}》，"
+                        "以后会默认继续录入到这张表。"
+                    ),
+                    "pending_mappings": table_decision["pending_mappings"],
+                }
+            if args.assistant_summary_json:
+                print_assistant_summary(summary, clean=args.agent_mode)
+            else:
+                print(summary["user_message"])
+            sys.exit(0)
 
     if not args.input_dir:
         parser.error("input_dir is required unless --intro is used")
