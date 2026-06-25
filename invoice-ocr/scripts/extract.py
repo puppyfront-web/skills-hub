@@ -409,6 +409,20 @@ def call_openclaw_chat(base_url: str, token: str, image_path: str,
     return result["choices"][0]["message"]["content"]
 
 
+def call_openclaw_text(base_url: str, token: str, prompt: str,
+                       model: str = "openclaw/default",
+                       timeout: int = 60) -> str:
+    return call_openclaw_chat(
+        base_url,
+        token,
+        image_path="",
+        prompt=prompt,
+        model=model,
+        timeout=timeout,
+        ocr_text="",
+    )
+
+
 def extract_json_from_text(text: str) -> dict:
     """Robustly extract JSON from model response, handling code fences and noise."""
     text = text.strip()
