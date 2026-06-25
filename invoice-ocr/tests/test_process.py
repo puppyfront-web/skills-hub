@@ -20,6 +20,33 @@ def workbook(path, headers):
     wb.save(path)
 
 
+def valid_invoice_result(filename):
+    return {
+        "filename": filename,
+        "status": "success",
+        "review_status": "pending",
+        "data": {
+            "document_type": "delivery",
+            "document_title": "销售码单",
+            "delivery_note": {
+                "supplier_name": "旺泰纺织",
+                "note_number": "WT-001",
+                "date": "2026-06-25",
+            },
+            "items": [{
+                "material_type": "面料",
+                "fabric_code": "A100",
+                "unit_price": 10.0,
+                "quantity": 20.0,
+                "unit": "米",
+                "total_amount": 200.0,
+            }],
+            "total_amount": 200.0,
+            "needs_review": [],
+        },
+    }
+
+
 class TargetTableTests(unittest.TestCase):
     def test_missing_table_waits_without_calling_llm(self):
         with patch.object(process, "infer_headers") as infer:
@@ -273,6 +300,27 @@ class TargetTableTests(unittest.TestCase):
             set_default.assert_called_once_with(str(path))
             payload = json.loads(print_mock.call_args.args[0])
             self.assertEqual(payload["status"], "table_ready")
+
+
+class ResultPostProcessingTests(unittest.TestCase):
+    def test_same_supplier_reuses_template_within_batch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            templates_dir = Path(tmp)
+            first = valid_invoice_result("001.jpg")
+            second = valid_invoice_result("002.jpg")
+            second["data"]["delivery_note"]["note_number"] = "WT-002"
+
+            processed = process.post_process_results(
+                [second, first],
+                templates_dir,
+            )
+
+        self.assertTrue(processed[0]["auto_template_created"])
+        self.assertEqual(processed[1]["template_matched"], "旺泰纺织")
+        self.assertEqual(
+            [item["review_status"] for item in processed],
+            ["confirmed", "confirmed"],
+        )
 
 
 if __name__ == "__main__":

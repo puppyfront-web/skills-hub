@@ -27,6 +27,7 @@ from templates import (
     save_from_results, get_table_for_supplier, set_supplier_table, set_default_table,
     load_preferences, REVIEW_COLUMNS, FIELD_LABELS,
     build_learning_entries, get_header_mapping, save_header_mapping,
+    auto_confirm_and_learn,
 )
 from export import export_xlsx_append, iter_invoice_groups
 from header_mapper import infer_headers
@@ -175,6 +176,19 @@ def prepare_target_table(
     return {**result, "status": status}
 
 
+def post_process_results(
+    results: list[dict],
+    templates_dir: Path,
+) -> list[dict]:
+    processed = []
+    for result in sorted(results, key=lambda item: item["filename"]):
+        if result.get("status") == "success":
+            result = post_process_extraction(result, templates_dir)
+            result = auto_confirm_and_learn(result, templates_dir)
+        processed.append(result)
+    return processed
+
+
 def process_batch(images_dir: str, output: str,
                   gateway_host: str, gateway_port: int, token: str,
                   model: str, templates_dir: Path,
@@ -260,9 +274,6 @@ def process_batch(images_dir: str, output: str,
             img = futures[future]
             try:
                 result = future.result()
-                # Programmatic post-processing
-                if result.get("status") == "success":
-                    result = post_process_extraction(result, templates_dir)
                 results.append(result)
             except Exception as e:
                 results.append({
@@ -277,7 +288,7 @@ def process_batch(images_dir: str, output: str,
                 filename=os.path.basename(img),
             )
 
-    results.sort(key=lambda r: r["filename"])
+    results = post_process_results(results, templates_dir)
     batch_id = Path(images_dir).name
 
     # Merge or create batch

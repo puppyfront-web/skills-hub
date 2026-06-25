@@ -550,15 +550,14 @@ def apply_corrections_to_data(data: dict, template: dict) -> dict:
 
 def validate_extraction(data: dict, template: dict | None) -> list[str]:
     """Check for missing required fields and issues. Returns list of issue strings."""
-    issues = []
-    items = data.get("items", [])
+    issues = list(data.get("needs_review") or [])
+    delivery = data.get("delivery_note") or {}
+    items = data.get("items") or []
 
-    # Check total mismatch
-    total = data.get("total_amount")
-    if total is not None and items:
-        item_sum = sum(it.get("total_amount", 0) or 0 for it in items)
-        if abs(item_sum - total) > 0.01:
-            issues.append(f"total_mismatch: 明细合计{item_sum}≠单据总额{total}")
+    if not delivery.get("supplier_name"):
+        issues.append("供应商缺失")
+    if not items:
+        issues.append("没有识别到明细行")
 
     # Select required fields based on document type
     # Prefer template's recorded type, fall back to extraction data
@@ -569,15 +568,41 @@ def validate_extraction(data: dict, template: dict | None) -> list[str]:
         doc_type = data.get("document_type", "delivery")
     required = REQUIRED_FIELDS_PROCESSING if doc_type == "processing" else REQUIRED_FIELDS_DELIVERY
 
-    # Check required fields per item (use Chinese labels)
+    item_sum = 0.0
     for idx, item in enumerate(items):
+        unit_price = item.get("unit_price")
+        quantity = item.get("quantity")
+        item_total = item.get("total_amount")
+        if unit_price is not None and quantity is not None:
+            calculated = float(unit_price) * float(quantity)
+            if item_total is None:
+                item["total_amount"] = calculated
+                item_total = calculated
+            elif abs(calculated - float(item_total)) > 0.01:
+                issues.append(
+                    f"第{idx + 1}行 金额不一致: "
+                    f"{unit_price}×{quantity}≠{item_total}"
+                )
+        if item_total is not None:
+            item_sum += float(item_total)
+
         for req in required:
             val = item.get(req)
             if val is None or val == "":
                 label = FIELD_LABELS.get(req, req)
                 issues.append(f"第{idx+1}行 {label} 缺失")
 
-    return issues
+    total = data.get("total_amount")
+    if total is None and items and all(
+        item.get("total_amount") is not None
+        for item in items
+    ):
+        data["total_amount"] = item_sum
+        total = item_sum
+    if total is not None and items and abs(item_sum - float(total)) > 0.01:
+        issues.append(f"total_mismatch: 明细合计{item_sum}≠单据总额{total}")
+
+    return list(dict.fromkeys(issues))
 
 
 def post_process_extraction(result: dict, templates_dir: Path) -> dict:
@@ -615,6 +640,34 @@ def post_process_extraction(result: dict, templates_dir: Path) -> dict:
     else:
         result["review_status"] = "pending"
 
+    return result
+
+
+def auto_confirm_and_learn(result: dict, templates_dir: Path) -> dict:
+    if result.get("status") != "success" or not result.get("data"):
+        return result
+
+    data = result["data"]
+    supplier = data.get("delivery_note", {}).get("supplier_name", "")
+    title = data.get("document_title", "")
+    template = match_template(supplier, templates_dir, title) if supplier else None
+    issues = validate_extraction(data, template)
+    data["needs_review"] = issues
+
+    if template:
+        if not issues:
+            result["review_status"] = "confirmed"
+            result["auto_confirmed"] = True
+            result["template_matched"] = template["supplier_name"]
+        return result
+    if issues:
+        result["review_status"] = "pending"
+        return result
+
+    save_template(build_template_from_extraction(result), templates_dir)
+    result["review_status"] = "confirmed"
+    result["auto_confirmed"] = True
+    result["auto_template_created"] = True
     return result
 
 
