@@ -1,5 +1,7 @@
 # Invoice OCR 高度自动化录入 Implementation Plan
 
+> **状态：已废弃。** 该计划使用固定 `HEADER_ALIASES`，与已确认的自适应 LLM 表头映射 Spec 冲突。请执行 `docs/superpowers/plans/2026-06-25-invoice-ocr-adaptive-automation.md`。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 首次设置一次目标表后，让用户只需发送单张或批量票据照片，系统自动识别、自动学习新供应商版式、自动写表，仅在异常时集中请求确认。
