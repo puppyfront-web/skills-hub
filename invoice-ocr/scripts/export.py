@@ -14,6 +14,7 @@ import argparse
 import csv
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 try:
@@ -77,6 +78,14 @@ THIN_BORDER = Border(
 NUM_FMT_MONEY = '#,##0.00'
 NUM_FMT_QTY = '#,##0.##'
 NUM_FMT_INT = '#,##0'
+
+
+@dataclass(frozen=True)
+class ExportStats:
+    written_rows: int
+    price_alerts: int
+    skipped_duplicates: int
+    output_path: str
 
 
 def load_results(path: str) -> dict:
@@ -148,6 +157,12 @@ def _set_cell(ws, row: int, col: int, value=None, fmt=None, fill=None):
     return c
 
 
+def _excel_safe(value):
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
 def _setup_header(ws):
     """Write header row with styling."""
     for col, header in enumerate(ALL_HEADERS, 1):
@@ -179,6 +194,28 @@ def _build_price_index(ws, last_row: int) -> dict:
         if supplier and fabric_code:
             key = (str(supplier).strip(), str(fabric_code).strip())
             if key not in prices and unit_price is not None:
+                try:
+                    prices[key] = float(unit_price)
+                except (TypeError, ValueError):
+                    continue
+    return prices
+
+
+def _build_mapped_price_index(ws, last_row: int, field_to_col: dict) -> dict:
+    supplier_col = field_to_col.get("supplier_name")
+    fabric_col = field_to_col.get("fabric_code")
+    price_col = field_to_col.get("unit_price")
+    if not supplier_col or not fabric_col or not price_col:
+        return {}
+
+    prices = {}
+    for row in range(2, last_row + 1):
+        supplier = ws.cell(row=row, column=supplier_col).value
+        fabric_code = ws.cell(row=row, column=fabric_col).value
+        unit_price = ws.cell(row=row, column=price_col).value
+        if supplier and fabric_code and unit_price is not None:
+            key = (str(supplier).strip(), str(fabric_code).strip())
+            if key not in prices:
                 try:
                     prices[key] = float(unit_price)
                 except (TypeError, ValueError):
@@ -298,6 +335,21 @@ def _build_note_index(ws, last_row: int) -> dict:
     return index
 
 
+def _build_mapped_note_index(ws, last_row: int, field_to_col: dict) -> dict:
+    note_col = field_to_col.get("note_number")
+    if not note_col:
+        return {}
+
+    supplier_col = field_to_col.get("supplier_name")
+    index = {}
+    for row in range(2, last_row + 1):
+        supplier = ws.cell(row=row, column=supplier_col).value if supplier_col else ""
+        key = _note_key(supplier, ws.cell(row=row, column=note_col).value)
+        if key:
+            index.setdefault(key, set()).add(row)
+    return index
+
+
 def _is_invoice_entry_sheet(ws) -> bool:
     headers = [
         ws.cell(row=1, column=col).value
@@ -328,11 +380,129 @@ def _prepare_invoice_sheet(wb):
     return ws, True
 
 
-def export_xlsx_append(batch: dict, output_path: str, only_confirmed: bool = False):
+def _last_data_row(ws) -> int:
+    last_row = ws.max_row
+    while last_row > 1 and all(
+        ws.cell(row=last_row, column=c).value is None
+        for c in range(1, ws.max_column + 1)
+    ):
+        last_row -= 1
+    return last_row
+
+
+def _target_field_to_column(mappings: dict) -> dict:
+    fields = {}
+    for column, mapping in mappings.items():
+        field = mapping.get("target_field") if isinstance(mapping, dict) else None
+        if field:
+            fields[field] = int(column)
+    return fields
+
+
+def _mapped_row_values(group: dict, item: dict) -> dict:
+    unit_price = item.get("unit_price")
+    quantity = item.get("quantity")
+    total_amount = item.get("total_amount")
+    if total_amount is None and unit_price is not None and quantity is not None:
+        total_amount = unit_price * quantity
+
+    supplier = item.get("supplier") or group.get("supplier_name") or ""
+    return {
+        "note_number": group.get("note_number") or "",
+        "date": group.get("date") or "",
+        "customer": group.get("customer") or "",
+        "supplier_name": supplier,
+        "style_number": item.get("style_number") or "",
+        "material_type": item.get("material_type") or "",
+        "material_name": item.get("material_name") or "",
+        "fabric_code": item.get("fabric_code") or "",
+        "color_code": item.get("color_code") or "",
+        "unit_price": unit_price,
+        "quantity": quantity,
+        "unit": item.get("unit") or "",
+        "total_amount": total_amount,
+        "remark": build_remark(item, group),
+    }
+
+
+def _export_mapped_xlsx_append(
+    batch: dict,
+    output_path: str,
+    mappings: dict,
+    only_confirmed: bool = False,
+) -> ExportStats:
+    output_file = Path(output_path)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    wb = load_workbook(output_path) if output_file.exists() else Workbook()
+    ws = wb.active
+    last_row = _last_data_row(ws)
+
+    field_to_col = _target_field_to_column(mappings)
+    price_index = _build_mapped_price_index(ws, last_row, field_to_col)
+    existing_notes = _build_mapped_note_index(ws, last_row, field_to_col)
+
+    row_num = last_row + 1
+    written_rows = 0
+    price_alerts = 0
+    skipped_duplicates = 0
+
+    for _, group in iter_invoice_groups(batch):
+        if only_confirmed and group["review_status"] != "confirmed":
+            continue
+        if group.get("is_error") or not group.get("items"):
+            continue
+
+        note_key = _note_key(group["supplier_name"], group.get("note_number"))
+        if note_key and note_key in existing_notes:
+            skipped_duplicates += 1
+            continue
+
+        group_rows = []
+        for item in group["items"]:
+            price_alert, price_key = _price_alert_for_item(price_index, group, item)
+            if price_alert:
+                price_alerts += 1
+
+            values = _mapped_row_values(group, item)
+            for field, column in field_to_col.items():
+                fill = PRICE_ALERT_FILL if field == "unit_price" and price_alert else None
+                _set_cell(
+                    ws,
+                    row_num,
+                    column,
+                    value=_excel_safe(values.get(field)),
+                    fill=fill,
+                )
+
+            group_rows.append(row_num)
+            if price_key:
+                price_index[price_key] = float(item.get("unit_price"))
+            row_num += 1
+            written_rows += 1
+
+        if note_key and group_rows:
+            existing_notes[note_key] = set(group_rows)
+
+    wb.save(output_path)
+    return ExportStats(written_rows, price_alerts, skipped_duplicates, output_path)
+
+
+def export_xlsx_append(
+    batch: dict,
+    output_path: str,
+    mappings: dict | bool | None = None,
+    only_confirmed: bool = False,
+):
     """Append new rows to existing Excel file, preserving user edits.
 
     If file doesn't exist, creates a new one.
     """
+    if isinstance(mappings, bool):
+        only_confirmed = mappings
+        mappings = None
+    if mappings is not None:
+        return _export_mapped_xlsx_append(batch, output_path, mappings, only_confirmed)
+
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     if output_file.exists():
@@ -493,7 +663,7 @@ def export_xlsx_append(batch: dict, output_path: str, only_confirmed: bool = Fal
         print(f"Warning: Cannot write to {output_path}, saving to {alt}", file=sys.stderr)
         wb.save(alt)
         output_path = alt
-    return new_rows, price_alerts
+    return ExportStats(new_rows, price_alerts, 0, output_path)
 
 
 def export_xlsx_full(batch: dict, output_path: str, only_confirmed: bool = False):
@@ -647,12 +817,12 @@ def main():
                    if not args.only_confirmed or g["review_status"] == "confirmed")
         print(f"Exported {rows} rows to {output_path}")
     elif args.mode == "append":
-        new_rows, alerts = export_xlsx_append(batch, output_path, args.only_confirmed)
+        stats = export_xlsx_append(batch, output_path, args.only_confirmed)
         confirmed = batch.get("summary", {}).get("confirmed", 0)
         pending = batch.get("summary", {}).get("pending_review", 0)
-        print(f"Appended {new_rows} rows to {output_path}")
-        if alerts:
-            print(f"  {alerts} price change(s) detected (highlighted red)")
+        print(f"Appended {stats.written_rows} rows to {stats.output_path}")
+        if stats.price_alerts:
+            print(f"  {stats.price_alerts} price change(s) detected (highlighted red)")
         print(f"  {confirmed} confirmed, {pending} pending review")
     else:
         rows, _ = export_xlsx_full(batch, output_path, args.only_confirmed)

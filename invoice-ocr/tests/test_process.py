@@ -301,6 +301,26 @@ class TargetTableTests(unittest.TestCase):
             payload = json.loads(print_mock.call_args.args[0])
             self.assertEqual(payload["status"], "table_ready")
 
+    def test_categorize_exports_with_table_mapping(self):
+        result = valid_invoice_result("001.jpg")
+        result["review_status"] = "confirmed"
+        batch = {"batch_id": "b1", "results": [result]}
+        mappings = {
+            1: {"header": "供货单位", "target_field": "supplier_name"},
+            2: {"header": "货品编号", "target_field": "fabric_code"},
+        }
+
+        with patch.object(process, "export_xlsx_append") as export:
+            process._categorize(
+                batch,
+                Path("/tmp/templates"),
+                "/tmp/table.xlsx",
+                table_mappings=mappings,
+            )
+
+        export.assert_called_once()
+        self.assertEqual(export.call_args.args[2], mappings)
+
 
 class ResultPostProcessingTests(unittest.TestCase):
     def test_same_supplier_reuses_template_within_batch(self):

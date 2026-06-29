@@ -195,7 +195,8 @@ def process_batch(images_dir: str, output: str,
                   parallel: int = 3, retries: int = 2,
                   append: bool = False,
                   review_in_excel: bool = False,
-                  assistant_progress: bool = False) -> dict:
+                  assistant_progress: bool = False,
+                  table_mappings: dict | None = None) -> dict:
     """Full pipeline: extract → post-process → categorize results.
 
     Returns dict with: confirmed, pending, results, output_path.
@@ -227,7 +228,13 @@ def process_batch(images_dir: str, output: str,
         if Path(results_json_path).is_file():
             with open(results_json_path, "r", encoding="utf-8") as f:
                 batch = json.load(f)
-            return _categorize(batch, templates_dir, output, export_pending=review_in_excel)
+            return _categorize(
+                batch,
+                templates_dir,
+                output,
+                export_pending=review_in_excel,
+                table_mappings=table_mappings,
+            )
         return {
             "confirmed": [],
             "pending": [],
@@ -319,11 +326,18 @@ def process_batch(images_dir: str, output: str,
         "识别结果已整理好，正在写入表格并生成复核提示。",
         counts={"total": len(results), "done": len(results)},
     )
-    return _categorize(batch, templates_dir, output, export_pending=review_in_excel)
+    return _categorize(
+        batch,
+        templates_dir,
+        output,
+        export_pending=review_in_excel,
+        table_mappings=table_mappings,
+    )
 
 
 def _categorize(batch: dict, templates_dir: Path, output: str,
-                export_pending: bool = False) -> dict:
+                export_pending: bool = False,
+                table_mappings: dict | None = None) -> dict:
     """Split results into confirmed/pending and export according to mode."""
     result_view = build_result_view(batch, output, export_pending)
     export_results = result_view["confirmed"]
@@ -343,7 +357,7 @@ def _categorize(batch: dict, templates_dir: Path, output: str,
                 "pending_review": len(result_view["pending"]),
             },
         }
-        export_xlsx_append(export_batch, output)
+        export_xlsx_append(export_batch, output, table_mappings)
 
     return result_view
 
@@ -1156,6 +1170,7 @@ def main():
 
     prefs = load_preferences()
     saved_table = prefs.get("default_table")
+    target_table_decision = None
 
     if args.self_check:
         base_url = f"http://{args.gateway_host}:{args.gateway_port}"
@@ -1201,7 +1216,7 @@ def main():
                 parser.error("--header-mapping must be a JSON object")
             save_user_header_mapping(table_path, user_mapping)
 
-        table_decision = prepare_target_table(
+        target_table_decision = prepare_target_table(
             table_path,
             None,
             {
@@ -1212,18 +1227,18 @@ def main():
                 "model": args.model,
             },
         )
-        if table_decision["status"] != "needs_header_confirmation":
+        if target_table_decision["status"] != "needs_header_confirmation":
             set_default_table(table_path)
             saved_table = table_path
 
         if not args.input_dir:
-            if table_decision["status"] == "needs_header_confirmation":
+            if target_table_decision["status"] == "needs_header_confirmation":
                 summary = {
                     "status": "needs_header_confirmation",
                     "user_message": (
                         "这张表有几列表头还不能确定，请确认字段对应关系。"
                     ),
-                    "pending_mappings": table_decision["pending_mappings"],
+                    "pending_mappings": target_table_decision["pending_mappings"],
                 }
             else:
                 summary = {
@@ -1232,7 +1247,7 @@ def main():
                         f"已设置录入表《{Path(table_path).name}》，"
                         "以后会默认继续录入到这张表。"
                     ),
-                    "pending_mappings": table_decision["pending_mappings"],
+                    "pending_mappings": target_table_decision["pending_mappings"],
                 }
             if args.assistant_summary_json:
                 print_assistant_summary(summary, clean=args.agent_mode)
@@ -1264,6 +1279,35 @@ def main():
                 print_assistant_summary(build_need_table_summary())
         sys.exit(0)
 
+    if target_table_decision is None:
+        target_table_decision = prepare_target_table(
+            output,
+            saved_table,
+            {
+                "base_url": f"http://{args.gateway_host}:{args.gateway_port}",
+                "token": args.token,
+                "model": args.model,
+            },
+        )
+    if target_table_decision["status"] == "needs_header_confirmation":
+        summary = {
+            "status": "needs_header_confirmation",
+            "user_message": "这张表有几列表头还不能确定，请确认字段对应关系。",
+            "pending_mappings": target_table_decision["pending_mappings"],
+        }
+        if args.assistant_summary_json:
+            print_assistant_summary(summary, clean=args.agent_mode)
+        else:
+            print(summary["user_message"])
+        sys.exit(0)
+    if target_table_decision["status"] == "waiting_for_table":
+        if args.assistant_summary_json:
+            print_assistant_summary(build_need_table_summary(), clean=args.agent_mode)
+        else:
+            print("NO_TABLE_SPECIFIED")
+        sys.exit(0)
+    table_mappings = target_table_decision.get("mappings") or None
+
     # Handle --apply: shortcut for corrections + finalize in one step
     if args.apply or args.finalize:
         results_json = str(Path(args.input_dir) / "results.json")
@@ -1276,6 +1320,7 @@ def main():
                 args.model, templates_dir,
                 args.parallel, args.retries, args.append, args.review_in_excel,
                 args.assistant_summary_json,
+                table_mappings,
             )
             # Write results.json from in-memory batch
             if result.get("batch"):
@@ -1328,7 +1373,7 @@ def main():
                 sys.exit(0)
 
         # Export
-        export_xlsx_append(batch, output)
+        export_xlsx_append(batch, output, table_mappings)
         total = sum(1 for r in batch.get("results", []) if r.get("review_status") == "confirmed")
         pending = sum(1 for r in batch.get("results", []) if r.get("review_status") == "pending")
         if not args.agent_mode:
@@ -1347,6 +1392,7 @@ def main():
             args.model, templates_dir,
             args.parallel, args.retries, args.append, args.review_in_excel,
             args.assistant_summary_json,
+            table_mappings,
         )
 
         # Interactive mode: walk through pending items
@@ -1358,7 +1404,7 @@ def main():
                     json.dump(result["batch"], f, ensure_ascii=False, indent=2)
             _run_interactive_loop(result["batch"], output, results_json, templates_dir)
             # Export after interactive confirmations
-            export_xlsx_append(result["batch"], output)
+            export_xlsx_append(result["batch"], output, table_mappings)
             set_default_table(output)
             summary = build_assistant_summary(build_result_view(result["batch"], output))
             print()
