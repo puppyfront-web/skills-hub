@@ -196,7 +196,8 @@ def process_batch(images_dir: str, output: str,
                   append: bool = False,
                   review_in_excel: bool = False,
                   assistant_progress: bool = False,
-                  table_mappings: dict | None = None) -> dict:
+                  table_mappings: dict | None = None,
+                  pending_mappings: list[dict] | None = None) -> dict:
     """Full pipeline: extract → post-process → categorize results.
 
     Returns dict with: confirmed, pending, results, output_path.
@@ -234,6 +235,7 @@ def process_batch(images_dir: str, output: str,
                 output,
                 export_pending=review_in_excel,
                 table_mappings=table_mappings,
+                pending_mappings=pending_mappings,
             )
         return {
             "confirmed": [],
@@ -332,14 +334,17 @@ def process_batch(images_dir: str, output: str,
         output,
         export_pending=review_in_excel,
         table_mappings=table_mappings,
+        pending_mappings=pending_mappings,
     )
 
 
 def _categorize(batch: dict, templates_dir: Path, output: str,
                 export_pending: bool = False,
-                table_mappings: dict | None = None) -> dict:
+                table_mappings: dict | None = None,
+                pending_mappings: list[dict] | None = None) -> dict:
     """Split results into confirmed/pending and export according to mode."""
     result_view = build_result_view(batch, output, export_pending)
+    result_view["pending_mappings"] = pending_mappings or []
     export_results = result_view["confirmed"]
     if export_pending:
         export_results = [
@@ -410,6 +415,23 @@ def _invoice_amount(result: dict) -> float:
         return 0.0
 
 
+def _review_details(pending_success: list[dict], pending_mappings: list[dict]) -> str:
+    details = []
+    for item in pending_success[:3]:
+        supplier = _result_supplier(item)
+        issues = item.get("data", {}).get("needs_review", []) or ["需要确认"]
+        details.append(f"{supplier}：{'、'.join(str(issue) for issue in issues[:2])}")
+
+    header_names = [
+        str(mapping.get("header"))
+        for mapping in pending_mappings[:3]
+        if mapping.get("header")
+    ]
+    if header_names:
+        details.append(f"表头待确认：{'、'.join(header_names)}")
+    return "；".join(details)
+
+
 def build_assistant_summary(result: dict) -> dict:
     """Build a channel-friendly summary for OpenClaw/Feishu assistants.
 
@@ -426,6 +448,7 @@ def build_assistant_summary(result: dict) -> dict:
     amount = sum(_invoice_amount(r) for r in confirmed + pending_success)
     pending_suppliers = sorted({_result_supplier(r) for r in pending_success})
     learned = result.get("learned", [])
+    pending_mappings = result.get("pending_mappings", [])
 
     if result.get("needs_clarification"):
         status = "needs_clarification"
@@ -448,6 +471,9 @@ def build_assistant_summary(result: dict) -> dict:
                 f"识别完成，共 {total} 张票据，其中 {len(pending_success)} 张需要你确认一下。"
                 "你可以直接回复“确认”“全部确认”，或告诉我哪一列不对。"
             )
+        details = _review_details(pending_success, pending_mappings)
+        if details:
+            message = f"{message} 待确认：{details}。"
         suggested = ["确认", "全部确认", "这家没有色号", "品名就是面料款号"]
     elif failed and confirmed:
         status = "partial_success"
@@ -484,6 +510,7 @@ def build_assistant_summary(result: dict) -> dict:
         "pending_suppliers": pending_suppliers,
         "suggested_replies": suggested,
         "learned": learned,
+        "pending_mappings": pending_mappings,
         "needs_clarification": result.get("needs_clarification"),
     }
 
@@ -1164,7 +1191,6 @@ def main():
     # --agent-mode: suppress extraneous stdout, act as final mode
     if args.agent_mode:
         args.assistant_summary_json = True
-        args.review_in_excel = True
 
     templates_dir = Path(args.templates_dir)
 
@@ -1307,6 +1333,7 @@ def main():
             print("NO_TABLE_SPECIFIED")
         sys.exit(0)
     table_mappings = target_table_decision.get("mappings") or None
+    pending_header_mappings = target_table_decision.get("pending_mappings") or []
 
     # Handle --apply: shortcut for corrections + finalize in one step
     if args.apply or args.finalize:
@@ -1321,6 +1348,7 @@ def main():
                 args.parallel, args.retries, args.append, args.review_in_excel,
                 args.assistant_summary_json,
                 table_mappings,
+                pending_header_mappings,
             )
             # Write results.json from in-memory batch
             if result.get("batch"):
@@ -1363,6 +1391,7 @@ def main():
                 print(f"Applied {changed} update(s).")
             if batch.get("needs_clarification"):
                 summary_result = build_result_view(batch, output)
+                summary_result["pending_mappings"] = pending_header_mappings
                 summary_result["needs_clarification"] = batch["needs_clarification"]
                 if args.agent_mode:
                     print(json.dumps(build_assistant_summary(summary_result), ensure_ascii=False, separators=(',', ':')))
@@ -1379,6 +1408,7 @@ def main():
         if not args.agent_mode:
             print(f"Exported to {output} ({total} confirmed, {pending} still pending)")
         summary_result = build_result_view(batch, output)
+        summary_result["pending_mappings"] = pending_header_mappings
         if args.agent_mode:
             print(json.dumps(build_assistant_summary(summary_result), ensure_ascii=False, separators=(',', ':')))
         elif args.assistant_summary_json:
@@ -1393,6 +1423,7 @@ def main():
             args.parallel, args.retries, args.append, args.review_in_excel,
             args.assistant_summary_json,
             table_mappings,
+            pending_header_mappings,
         )
 
         # Interactive mode: walk through pending items
@@ -1406,7 +1437,9 @@ def main():
             # Export after interactive confirmations
             export_xlsx_append(result["batch"], output, table_mappings)
             set_default_table(output)
-            summary = build_assistant_summary(build_result_view(result["batch"], output))
+            summary_result = build_result_view(result["batch"], output)
+            summary_result["pending_mappings"] = pending_header_mappings
+            summary = build_assistant_summary(summary_result)
             print()
             print(summary["user_message"])
         else:

@@ -343,5 +343,52 @@ class ResultPostProcessingTests(unittest.TestCase):
         )
 
 
+class BatchAutomationTests(unittest.TestCase):
+    def test_pending_invoices_are_not_exported_by_default(self):
+        confirmed = valid_invoice_result("ok.jpg")
+        confirmed["review_status"] = "confirmed"
+        pending = valid_invoice_result("bad.jpg")
+        pending["review_status"] = "pending"
+        pending["data"]["needs_review"] = ["单价缺失"]
+        batch = {"results": [confirmed, pending]}
+
+        with patch.object(process, "export_xlsx_append") as export:
+            process._categorize(
+                batch,
+                Path("/tmp/templates"),
+                "/tmp/out.xlsx",
+                table_mappings={
+                    1: {"header": "单价", "target_field": "unit_price"},
+                },
+            )
+
+        exported = export.call_args.args[0]["results"]
+        self.assertEqual([item["filename"] for item in exported], ["ok.jpg"])
+
+    def test_summary_contains_all_invoice_and_header_exceptions(self):
+        result = {
+            "confirmed": [],
+            "pending": [{
+                "filename": "bad.jpg",
+                "status": "success",
+                "data": {
+                    "delivery_note": {"supplier_name": "甲厂"},
+                    "needs_review": ["单价缺失"],
+                },
+            }],
+            "pending_mappings": [{
+                "header": "结算口径",
+                "reason_code": "low_confidence",
+            }],
+            "output_path": "/tmp/out.xlsx",
+        }
+
+        summary = process.build_assistant_summary(result)
+
+        self.assertIn("甲厂", summary["user_message"])
+        self.assertIn("单价缺失", summary["user_message"])
+        self.assertIn("结算口径", summary["user_message"])
+
+
 if __name__ == "__main__":
     unittest.main()
