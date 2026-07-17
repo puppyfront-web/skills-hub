@@ -345,6 +345,8 @@ def _categorize(batch: dict, templates_dir: Path, output: str,
     """Split results into confirmed/pending and export according to mode."""
     result_view = build_result_view(batch, output, export_pending)
     result_view["pending_mappings"] = pending_mappings or []
+    result_view["price_alerts"] = 0
+    result_view["price_alert_details"] = []
     export_results = result_view["confirmed"]
     if export_pending:
         export_results = [
@@ -362,7 +364,9 @@ def _categorize(batch: dict, templates_dir: Path, output: str,
                 "pending_review": len(result_view["pending"]),
             },
         }
-        export_xlsx_append(export_batch, output, table_mappings)
+        stats = export_xlsx_append(export_batch, output, table_mappings)
+        result_view["price_alerts"] = stats.price_alerts
+        result_view["price_alert_details"] = list(stats.price_alert_details)
 
     return result_view
 
@@ -432,6 +436,20 @@ def _review_details(pending_success: list[dict], pending_mappings: list[dict]) -
     return "；".join(details)
 
 
+def _price_alert_message(details: list[dict]) -> str:
+    if not details:
+        return ""
+    parts = []
+    for item in details[:3]:
+        supplier = item.get("supplier_name") or "未知供应商"
+        fabric_code = item.get("fabric_code") or "未知材料"
+        previous = item.get("previous_price")
+        current = item.get("current_price")
+        parts.append(f"{supplier} {fabric_code} {previous}→{current}")
+    suffix = "，已在表格中标红。" if len(details) <= 3 else f" 等 {len(details)} 项，已在表格中标红。"
+    return f" 发现价格变动：{'；'.join(parts)}{suffix}"
+
+
 def build_assistant_summary(result: dict) -> dict:
     """Build a channel-friendly summary for OpenClaw/Feishu assistants.
 
@@ -449,6 +467,7 @@ def build_assistant_summary(result: dict) -> dict:
     pending_suppliers = sorted({_result_supplier(r) for r in pending_success})
     learned = result.get("learned", [])
     pending_mappings = result.get("pending_mappings", [])
+    price_alert_details = result.get("price_alert_details", [])
 
     if result.get("needs_clarification"):
         status = "needs_clarification"
@@ -495,6 +514,8 @@ def build_assistant_summary(result: dict) -> dict:
 
     if learned:
         message = f"{message} 我记住了：{'；'.join(learned)}。"
+    if price_alert_details:
+        message = f"{message}{_price_alert_message(price_alert_details)}"
 
     return {
         "status": status,
@@ -511,6 +532,8 @@ def build_assistant_summary(result: dict) -> dict:
         "suggested_replies": suggested,
         "learned": learned,
         "pending_mappings": pending_mappings,
+        "price_alerts": len(price_alert_details),
+        "price_alert_details": price_alert_details,
         "needs_clarification": result.get("needs_clarification"),
     }
 

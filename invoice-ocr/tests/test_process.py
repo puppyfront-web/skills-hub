@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from openpyxl import Workbook
@@ -388,6 +389,52 @@ class BatchAutomationTests(unittest.TestCase):
         self.assertIn("甲厂", summary["user_message"])
         self.assertIn("单价缺失", summary["user_message"])
         self.assertIn("结算口径", summary["user_message"])
+
+    def test_summary_mentions_price_alerts(self):
+        result = {
+            "confirmed": [valid_invoice_result("ok.jpg")],
+            "pending": [],
+            "price_alert_details": [{
+                "supplier_name": "旺泰",
+                "fabric_code": "A100",
+                "previous_price": 10.0,
+                "current_price": 11.0,
+            }],
+            "output_path": "/tmp/out.xlsx",
+        }
+
+        summary = process.build_assistant_summary(result)
+
+        self.assertIn("价格变动", summary["user_message"])
+        self.assertIn("旺泰", summary["user_message"])
+        self.assertIn("A100", summary["user_message"])
+        self.assertIn("10.0→11.0", summary["user_message"])
+
+    def test_categorize_carries_price_alerts_from_export(self):
+        confirmed = valid_invoice_result("ok.jpg")
+        confirmed["review_status"] = "confirmed"
+        stats = SimpleNamespace(
+            written_rows=1,
+            price_alerts=1,
+            skipped_duplicates=0,
+            output_path="/tmp/out.xlsx",
+            price_alert_details=[{
+                "supplier_name": "旺泰",
+                "fabric_code": "A100",
+                "previous_price": 10.0,
+                "current_price": 11.0,
+            }],
+        )
+
+        with patch.object(process, "export_xlsx_append", return_value=stats):
+            result = process._categorize(
+                {"results": [confirmed]},
+                Path("/tmp/templates"),
+                "/tmp/out.xlsx",
+            )
+
+        self.assertEqual(result["price_alerts"], 1)
+        self.assertEqual(result["price_alert_details"], stats.price_alert_details)
 
 
 if __name__ == "__main__":

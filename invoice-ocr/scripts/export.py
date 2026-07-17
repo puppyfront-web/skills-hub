@@ -86,6 +86,7 @@ class ExportStats:
     price_alerts: int
     skipped_duplicates: int
     output_path: str
+    price_alert_details: tuple[dict, ...] = ()
 
 
 def load_results(path: str) -> dict:
@@ -315,6 +316,17 @@ def _price_alert_for_item(price_index: dict, group: dict, item: dict) -> tuple[b
     return False, key
 
 
+def _price_alert_detail(group: dict, item: dict, previous_price: float) -> dict:
+    supplier = item.get("supplier") or group["supplier_name"] or ""
+    return {
+        "supplier_name": str(supplier).strip(),
+        "fabric_code": str(item.get("fabric_code") or "").strip(),
+        "previous_price": previous_price,
+        "current_price": float(item.get("unit_price")),
+        "note_number": group.get("note_number") or "",
+    }
+
+
 def _build_note_index(ws, last_row: int) -> dict:
     """Build index of (note_number_or_filename) -> set of row numbers for dedup.
 
@@ -445,6 +457,7 @@ def _export_mapped_xlsx_append(
     written_rows = 0
     price_alerts = 0
     skipped_duplicates = 0
+    price_alert_details = []
 
     for _, group in iter_invoice_groups(batch):
         if only_confirmed and group["review_status"] != "confirmed":
@@ -462,6 +475,9 @@ def _export_mapped_xlsx_append(
             price_alert, price_key = _price_alert_for_item(price_index, group, item)
             if price_alert:
                 price_alerts += 1
+                price_alert_details.append(
+                    _price_alert_detail(group, item, price_index[price_key])
+                )
 
             values = _mapped_row_values(group, item)
             for field, column in field_to_col.items():
@@ -484,7 +500,13 @@ def _export_mapped_xlsx_append(
             existing_notes[note_key] = set(group_rows)
 
     wb.save(output_path)
-    return ExportStats(written_rows, price_alerts, skipped_duplicates, output_path)
+    return ExportStats(
+        written_rows,
+        price_alerts,
+        skipped_duplicates,
+        output_path,
+        tuple(price_alert_details),
+    )
 
 
 def export_xlsx_append(
@@ -545,6 +567,7 @@ def export_xlsx_append(
     row_num = last_row + 1
     new_rows = 0
     price_alerts = 0
+    price_alert_details = []
 
     for result, group in iter_invoice_groups(batch):
         if only_confirmed and group["review_status"] != "confirmed":
@@ -587,6 +610,9 @@ def export_xlsx_append(
                 price_alert, price_key = _price_alert_for_item(price_index, group, item)
                 if price_alert:
                     price_alerts += 1
+                    price_alert_details.append(
+                        _price_alert_detail(group, item, price_index[price_key])
+                    )
 
                 if idx < len(existing_note_rows):
                     target_row = existing_note_rows[idx]
@@ -620,6 +646,9 @@ def export_xlsx_append(
                     price_alert, price_key = _price_alert_for_item(price_index, group, item)
                     if price_alert:
                         price_alerts += 1
+                        price_alert_details.append(
+                            _price_alert_detail(group, item, price_index[price_key])
+                        )
                     _write_item_row(
                         ws, target_row, group, item, row_fill, price_alert,
                         preserve_user_columns=True,
@@ -632,6 +661,9 @@ def export_xlsx_append(
             price_alert, price_key = _price_alert_for_item(price_index, group, item)
             if price_alert:
                 price_alerts += 1
+                price_alert_details.append(
+                    _price_alert_detail(group, item, price_index[price_key])
+                )
 
             _write_item_row(ws, row_num, group, item, row_fill, price_alert)
             wrote_group = True
@@ -663,7 +695,7 @@ def export_xlsx_append(
         print(f"Warning: Cannot write to {output_path}, saving to {alt}", file=sys.stderr)
         wb.save(alt)
         output_path = alt
-    return ExportStats(new_rows, price_alerts, 0, output_path)
+    return ExportStats(new_rows, price_alerts, 0, output_path, tuple(price_alert_details))
 
 
 def export_xlsx_full(batch: dict, output_path: str, only_confirmed: bool = False):

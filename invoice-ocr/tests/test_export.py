@@ -109,6 +109,10 @@ class ExportTests(unittest.TestCase):
 
             sheet = load_workbook(path).active
             self.assertEqual(stats.price_alerts, 1)
+            self.assertEqual(stats.price_alert_details[0]["supplier_name"], "旺泰")
+            self.assertEqual(stats.price_alert_details[0]["fabric_code"], "A100")
+            self.assertEqual(stats.price_alert_details[0]["previous_price"], 10.0)
+            self.assertEqual(stats.price_alert_details[0]["current_price"], 11.0)
             self.assertEqual(
                 sheet.cell(3, 3).fill.start_color.rgb,
                 PRICE_ALERT_FILL.start_color.rgb,
