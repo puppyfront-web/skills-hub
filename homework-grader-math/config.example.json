@@ -1,0 +1,8 @@
+{
+  "_comment": "这是配置示例。实际配置请复制到 .state/config.json（首次运行 grade.py --setup 会自动生成）",
+  "base_url": "https://api.openai.com",
+  "api_key": "sk-你的API-key",
+  "model": "gpt-4o",
+  "text_model": null,
+  "vision_model": null
+}

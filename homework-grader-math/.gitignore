@@ -1,0 +1,12 @@
+# 运行时状态（含 API key、学生学情、题库缓存、生成的卡片）
+# 这些是用户私有数据，不进 git
+.state/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 系统
+.DS_Store
+Thumbs.db
