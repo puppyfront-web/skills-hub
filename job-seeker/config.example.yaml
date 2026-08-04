@@ -1,0 +1,142 @@
+# 求职助手 · 用户配置
+#
+# 复制本文件为 config.yaml 并改成你自己的信息。
+# Skill 启动时（Step 1）会读这个文件，决定怎么拓岗、过滤、评分、定制简历。
+
+# ─────────────────────────────────────────────────────────────
+# 1. 个人信息（必填）
+# ─────────────────────────────────────────────────────────────
+identity:
+  name: "你的名字"                    # 你的姓名（中/英文）
+  email: "your@email.com"             # 发件邮箱（投国内 QQ/163，投海外推荐 Gmail）
+  phone: "+86 138-0000-0000"
+  github: "https://github.com/yourname"
+  # 中文简历母版（Markdown）。Skill 会基于它针对每个 JD 做定制
+  resume_base_zh: "resume-base-zh.md"
+  resume_base_en: "resume-base-en.md"
+
+# ─────────────────────────────────────────────────────────────
+# 2. 求职方向（必填，决定拓岗关键词与评分维度）
+# ─────────────────────────────────────────────────────────────
+# 💡 关键词预设：选一个取消注释，或自己改
+#
+# --- 预设 A：软件工程师（前端/后端/全栈/AI）---
+# _JOB_FAMILY: &tech
+#   - "AI 应用"
+#   - "AI engineer"
+#   - "LLM"
+#   - "agent"
+#   - "前端"
+#   - "frontend"
+#   - "React"
+#   - "TypeScript"
+#   - "全栈"
+#   - "full-stack"
+#
+# --- 预设 B：产品经理 ---
+# _JOB_FAMILY: &pm
+#   - "产品经理"
+#   - "product manager"
+#   - "PM"
+#   - "product owner"
+#   - "产品总监"
+#   - "Head of Product"
+#   - "数据产品"
+#   - "AI 产品"
+#   - "growth PM"
+#
+# --- 预设 C：设计师（UI/UX/视觉）---
+# _JOB_FAMILY: &design
+#   - "UI designer"
+#   - "UX designer"
+#   - "product designer"
+#   - "视觉设计"
+#   - "交互设计"
+#   - "UI/UX"
+#   - "design lead"
+#   - "Head of Design"
+#   - "brand designer"
+#
+# --- 预设 D：运营/市场（效果有限，岗位少）---
+# _JOB_FAMILY: &growth
+#   - "运营"
+#   - "growth"
+#   - "marketing"
+#   - "内容运营"
+#   - "社群运营"
+#   - "SEO"
+#   - "community manager"
+
+target:
+  # 岗位族：从上面预设选一个粘贴到这里，或自己写
+  job_keywords:
+    - "AI 应用"
+    - "AI engineer"
+    - "LLM"
+    - "agent"
+    - "前端"
+    - "frontend"
+    - "React"
+    - "TypeScript"
+    - "全栈"
+    - "full-stack"
+
+  # 排除关键词：命中即丢弃（避免拉到无关岗位）
+  # 通用排除：HR 自己招人 / 招聘中介
+  exclude_keywords:
+    - "recruiter looking"      # HR 反向求职
+    - "looking for candidate"  # 中介
+    # 技术岗可加：
+    # - "算法研究员"           # 不要纯算法岗
+    # - "test engineer"        # 不要测试岗
+
+  # 想去的地域（决定 JD 的地域/远程维度评分）
+  # 可选值：global / china / us / eu / apac / remote_only
+  preferred_regions:
+    - global            # 全球远程
+    - china             # 国内
+    - apac              # 亚太
+
+  # 排除地域（命中即跳过）
+  exclude_regions:
+    - "US only"         # 不要 US-only（除非他们接受 contractor）
+    - "Onsite SF"       # 不要 onsite
+
+  # 工作模式偏好（不要在邮件里强调，只用于评分内部参考）
+  # 注意：根据用户反馈，求职邮件正文不再强调"远程"，由用户在面试阶段争取
+  work_mode: "prefer_remote_but_dont_say"   # remote_first / flexible / onsite_ok
+
+  # 经验年限（用于匹配评分）
+  years_experience: 10
+
+# ─────────────────────────────────────────────────────────────
+# 3. 简历侧重（决定针对 JD 怎么重排简历内容）
+# ─────────────────────────────────────────────────────────────
+resume_focus:
+  # 你的核心强项（按重要度排序）。Skill 改写简历时会优先突出这些
+  strengths:
+    - "10 年前端工程深度（React/TypeScript/Vue3/Flutter）"
+    - "2 年 AI 应用落地（LLM + Tools、MCP、RAG、多智能体编排）"
+    - "团队带领（5 人）+ 跨团队协同"
+
+  # 你的弱项（HR 可能问的）。Skill 改写时弱化这些
+  weaknesses_to_avoid:
+    - "非 CS 科班（机械工程本科）"
+    - "无 Rust/Go 后端深度"
+
+  # 教育（写真实）
+  education: "你的大学 · 你的专业 · 本科 · 201X-201X"
+
+# ─────────────────────────────────────────────────────────────
+# 4. 投递策略
+# ─────────────────────────────────────────────────────────────
+apply:
+  # 默认投递档：semi_auto（生成草稿用户手动发）/ auto（LinkedIn 全自动，需 Phase 3）
+  default_mode: "semi_auto"
+
+  # 每日投递上限（节流，避免被识别为 spam）
+  daily_limit: 5
+
+  # 默认简历语言：投国内中文、投海外英文
+  # auto = skill 根据 JD 来源自动判断（国内/中文 JD → 中文，否则英文）
+  default_language: "auto"
