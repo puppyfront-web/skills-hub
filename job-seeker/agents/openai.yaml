@@ -1,0 +1,4 @@
+interface:
+  display_name: "求职助手"
+  short_description: "拓岗·匹配·定制简历·半自动投递·追踪"
+  default_prompt: "用 $job-seeker 帮我找岗位、匹配 JD、定制简历、投递追踪。支持全职/兼职/远程/实习。"
