@@ -1,0 +1,85 @@
+{
+  "id": "garment-fabric",
+  "name": "服装面料厂",
+  "description": "面料/辅料/加工送货单 → 面料成本核算表。完整保留原服装厂场景：款号识别规则(以26开头/以#结尾)、13项物料枚举、24列成本核算表头(含单件金额/用料 + 面料辅料砂洗加工裁床吊牌包装合计)。",
+
+  "document_types": {
+    "delivery": {
+      "name": "送货单/出仓单",
+      "title_examples": ["销售码单", "送货单", "购销协议", "码单"]
+    },
+    "processing": {
+      "name": "加工单/洗水单",
+      "title_examples": ["洗水加工送货单", "印花加工单", "砂洗加工单"]
+    }
+  },
+
+  "material_types": ["面料", "相色", "螺纹", "印花", "扣子", "拉链", "砂洗", "洗水", "织带", "拉条", "披肩", "钉扣", "其他"],
+
+  "units": ["米", "公斤", "件", "个", "码"],
+
+  "style_number_rule": {
+    "enabled": true,
+    "patterns": ["^26", "#$"],
+    "_patterns_doc": "正则。编号去空格后匹配任一即可写入 style_number。^26=以26开头(允许字母前缀如A26036-2)；#$=以#结尾。",
+    "forbidden": ["E35101", "35101"],
+    "_forbidden_doc": "这些厂内货号不得写入 style_number，可写 remark 或 fabric_code。"
+  },
+
+  "fields": {
+    "delivery_note": [
+      ["supplier_name", "面料厂家"],
+      ["note_number", "单号"],
+      ["date", "日期"],
+      ["customer", "客户"]
+    ],
+    "items": [
+      ["material_type", "面料/辅料"],
+      ["material_name", "品名"],
+      ["fabric_code", "面料款号"],
+      ["style_number", "款号"],
+      ["color_code", "色号/颜色"],
+      ["unit_price", "单价"],
+      ["quantity", "数量"],
+      ["unit", "单位"],
+      ["total_amount", "金额"]
+    ]
+  },
+
+  "excel": {
+    "sheet_name": "票据录入",
+    "_headers_doc": "headers 是主表(A列起)完整表头，与 column_map 列号一一对应；cost_headers 接在主表之后。",
+    "headers": ["单号", "日期", "款号", "描述", "件数", "面料/辅料", "面料厂家", "面料款号", "色号/颜色", "单价", "数量", "单位", "总金额", "单件金额", "用料", "备注"],
+    "column_map": {
+      "note_number": 1,
+      "date": 2,
+      "style_number": 3,
+      "material_type": 6,
+      "supplier_name": 7,
+      "fabric_code": 8,
+      "color_code": 9,
+      "unit_price": 10,
+      "quantity": 11,
+      "unit": 12,
+      "total_amount": 13,
+      "remark": 16
+    },
+    "user_fill_columns": [4, 5],
+    "_user_fill_doc": "这些列由用户后续手填(描述D/件数E)，导出时新行置空，更新已有行时保留。",
+    "cost_headers": ["面料", "辅料", "砂洗", "加工", "裁床", "吊牌", "包装", "合计"],
+    "formulas": [
+      {"col": "M", "expr": "=J{r}*K{r}", "fmt": "money", "needs": ["unit_price", "quantity"], "fallback_field": "total_amount"},
+      {"col": "N", "expr": "=IF(E{r}=\"\",\"\",M{r}/E{r})", "fmt": "money", "needs": ["__always__"]},
+      {"col": "O", "expr": "=IF(E{r}=\"\",\"\",K{r}/E{r})", "fmt": "qty", "needs": ["__always__"]}
+    ]
+  },
+
+  "supplier_suffixes": ["有限责任公司", "有限公司", "公司", "厂", "布行", "纺织"],
+
+  "vocab": {
+    "domain_noun": "面料/辅料",
+    "delivery_name": "送货单",
+    "processing_name": "加工单",
+    "review_examples": ["确认", "全部确认", "无色号", "品名就是面料款号", "第二行数量是300"]
+  }
+}

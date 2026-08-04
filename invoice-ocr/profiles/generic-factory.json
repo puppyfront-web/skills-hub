@@ -1,0 +1,80 @@
+{
+  "id": "generic-factory",
+  "name": "通用工厂录单",
+  "description": "面向中小工厂的通用送货单/出仓单/收据/加工单 OCR 录入。物料分类开放、表头精简、无款号规则、无成本分解列。换行业时可直接复制本文件改造。",
+  "_doc": "本 profile 是默认配置。所有字段都尽量开放，不预设任何行业规则。要适配具体工厂，复制本文件改 id/name/material_types/units/excel_headers 即可。",
+
+  "document_types": {
+    "delivery": {
+      "name": "送货单/出仓单",
+      "title_examples": ["送货单", "出仓单", "发货单", "销售单", "收据"]
+    },
+    "processing": {
+      "name": "加工单/外协单",
+      "title_examples": ["加工单", "外协单", "委外加工单", "工序单"]
+    }
+  },
+
+  "material_types": ["其他"],
+  "_material_types_doc": "material_types 用于提示模型把每行物料归类到某个枚举。generic 只给一个兜底'其他'，等于告诉模型自由分类（识别到什么都允许）。想要严格分类的行业 profile 在这里填具体枚举，如服装填 ['面料','辅料',...]。",
+
+  "units": ["件", "个", "公斤", "米", "箱"],
+
+  "style_number_rule": {
+    "enabled": false,
+    "_doc": "enabled=false 时不向 prompt 注入任何款号判定规则，style_number 字段按模型理解自由填写（多数通用工厂不需要）。服装等行业把 enabled 设 true 并填 patterns/forbidden。",
+    "patterns": [],
+    "forbidden": []
+  },
+
+  "fields": {
+    "delivery_note": [
+      ["supplier_name", "供应商"],
+      ["note_number", "单号"],
+      ["date", "日期"],
+      ["customer", "客户"]
+    ],
+    "items": [
+      ["material_type", "物料分类"],
+      ["material_name", "品名"],
+      ["spec", "规格"],
+      ["unit_price", "单价"],
+      ["quantity", "数量"],
+      ["unit", "单位"],
+      ["total_amount", "金额"]
+    ]
+  },
+
+  "excel": {
+    "sheet_name": "票据录入",
+    "_doc": "headers 是主表(A列起)完整表头；column_map 把 json_key 映射到列号；formulas 用列字母，金额(J=10)由公式生成，不进 column_map。",
+    "headers": ["单号", "日期", "物料分类", "品名", "供应商", "规格", "单价", "数量", "单位", "金额", "备注"],
+    "column_map": {
+      "note_number": 1,
+      "date": 2,
+      "material_type": 3,
+      "material_name": 4,
+      "supplier_name": 5,
+      "spec": 6,
+      "unit_price": 7,
+      "quantity": 8,
+      "unit": 9,
+      "remark": 11
+    },
+    "user_fill_columns": [],
+    "cost_headers": [],
+    "formulas": [
+      {"col": "J", "expr": "=G{r}*H{r}", "fmt": "money", "needs": ["unit_price", "quantity"], "fallback_field": "total_amount"}
+    ],
+    "_formula_note": "formulas.col 是 Excel 列字母；expr 里 {r} 替换为行号；needs 列出依赖的 item 字段，全缺失时写 fallback_field。"
+  },
+
+  "supplier_suffixes": ["有限责任公司", "有限公司", "公司", "厂", "工厂", "经营部"],
+
+  "vocab": {
+    "domain_noun": "物料",
+    "delivery_name": "送货单",
+    "processing_name": "加工单",
+    "review_examples": ["确认", "全部确认", "第二行数量是300", "这家没有规格"]
+  }
+}
