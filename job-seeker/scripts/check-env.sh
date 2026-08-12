@@ -43,17 +43,18 @@ STATUS_LI="";   DETAIL_LI="";   HINT_LI=""
 
 check_v2ex() {
   # V2EX 用公开 API 直接 ping，不依赖 agent-reach
-  local http_code
+  local http_code="000"
   http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
     "https://www.v2ex.com/api/topics/hot.json" \
-    -H "User-Agent: agent-reach/1.0" 2>/dev/null || echo "000")
+    -H "User-Agent: agent-reach/1.0" 2>/dev/null) || http_code="000"
+  [[ -z "$http_code" ]] && http_code="000"
   if [[ "$http_code" == "200" ]]; then
     STATUS_V2EX="ok"
     DETAIL_V2EX="公开 API 可达（HTTP 200）"
     HINT_V2EX=""
   else
     STATUS_V2EX="fail"
-    DETAIL_V2EX="API 不可达（HTTP $http_code）"
+    DETAIL_V2EX="API 不可达（HTTP ${http_code:-000}）"
     HINT_V2EX="检查网络；若大陆访问被墙：agent-reach configure proxy http://user:pass@ip:port"
   fi
 }

@@ -1,0 +1,99 @@
+# ─────────────────────────────────────────────────────────────
+# skills-hub 仓库 .gitignore
+# ─────────────────────────────────────────────────────────────
+
+# === 运行时个人数据（绝不入仓库）===
+# skill 跑起来后产生的求职数据：简历、INDEX、eml、报告
+# 这些是用户的隐私，git 不能追踪
+jobs/
+**/jobs/
+
+# 用户级配置（含个人邮箱/电话）
+ai-job-seeker/config.yaml
+**/config.yaml
+!config.example.yaml
+!**/config.example.yaml
+
+# === 简历母版与生成产物 ===
+*.pdf
+*.docx
+!docs/**/*.pdf
+!**/references/**/*.pdf
+
+# === 邮件 .eml ===
+*.eml
+
+# === macOS 系统垃圾 ===
+.DS_Store
+**/.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# === 编辑器 ===
+.vscode/
+.idea/
+*.swp
+*~
+*.sublime-workspace
+*.sublime-project
+
+# === Node（部分 skill 子目录可能有）===
+node_modules/
+dist/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# === 本地工具会话数据（Agent/ZCode 等生成的 plans、缓存）===
+.zcode/
+.agent/
+
+# === 运行时产物目录（报告、图片、生成的数据）===
+# 这些是 skill 跑完生成的产物，不是源代码
+reports/
+output/
+outputs/
+taobao-images/
+**/generated/
+**/downloads/
+
+# === Excel / Word 文件（多为客户数据或生成的报告）===
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+!**/references/**/*.csv
+!**/examples/**/*.csv
+
+# === Office 临时锁文件 ===
+~$*
+
+# === 临时文件 ===
+/tmp/
+*.tmp
+*.bak
+*.cache
+
+# === 顶层生成的清单文件（由脚本一次性扫描生成）===
+/skill-docs-list.txt
+/stock-skill-docs-list.txt
+/cross-border-ecommerce-skill-docs-list.txt
+/skill-category-summary.md
+/skill-primary-category-summary.md
